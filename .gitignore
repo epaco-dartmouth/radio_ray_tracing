@@ -1,0 +1,78 @@
+# ── Jupyter Notebook ─────────────────────────────
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+*.ipynb_checkpoints
+
+# Jupyter runtime / session files
+.jupyter/
+jupyter_notebook_config.py
+*.nbconvert.ipynb
+
+# IPython
+profile_default/
+ipython_config.py
+
+# ── Python ───────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# ── Virtual environments ─────────────────────────
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ── Package managers / environment specs (optional) ─
+# Uncomment if you don't want lock files tracked
+# environment.yml
+# Pipfile.lock
+# poetry.lock
+
+# ── Temp / session / cache files ─────────────────
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.cache/
+tmp/
+temp/
+*.log
+
+# ── OS-specific junk ──────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── Editor / IDE ──────────────────────────────────
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# ── Data / output (optional, uncomment as needed) ─
+# figures/
+# *.npy
+# *.npz
+# *.h5
+# *.csv
+# results/
+# outputs/
+
+# ── Testing / coverage ────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
