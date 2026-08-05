@@ -58,39 +58,6 @@ Beyond a radius `m.r_freeze`, the polarization angle (PA) reference field
 physical expectation that polarization stops adiabatically tracking the
 local field once the wave decouples from the plasma.
 
-## Repository Structure
-
-```
-.
-├── README.md
-├── ray_tracing.ipynb        # Main notebook (model, integrator, analysis)
-├── environment.yml          # (optional) conda/pip environment spec
-└── figures/                 # Example output plots (optional)
-```
-
-## Installation
-
-```bash
-git clone https://github.com/<your-org>/<repo-name>.git
-cd <repo-name>
-pip install numpy matplotlib tqdm
-```
-
-or, with conda:
-
-```bash
-conda env create -f environment.yml
-conda activate raytracing
-```
-
-## Usage
-
-Open the notebook:
-
-```bash
-jupyter lab ray_tracing.ipynb
-```
-
 ### Minimal example
 
 ```python
