@@ -1,0 +1,17 @@
+#!/bin/bash
+  
+#SBATCH -J postprocess
+#SBATCH --partition standard
+##SBATCH --account=physics
+#SBATCH -o ./post_6.out
+#SBATCH -e ./post_6.err
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=8
+#SBATCH --cpus-per-task=1
+#SBATCH --time=24:00:00
+
+conda activate /dartfs/rc/lab/E/EPaCO/envs/entity
+
+python -u radio_ray_tracing_standalone.py --f-O=0.6 --out="res_out_06.h5"
+
+
