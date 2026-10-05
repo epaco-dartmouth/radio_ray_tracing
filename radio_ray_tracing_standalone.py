@@ -2,28 +2,39 @@
 Pulsar Magnetosphere O<->X Mode-Conversion Ray Tracer
 ======================================================
 
-Hamiltonian ray tracing of radio waves through a pulsar magnetosphere:
-cold, strongly-magnetized dispersion relation in a dipolar field with a
-Goldreich-Julian-like density profile. O-modes refract self-consistently
-in the plasma density gradient; X-modes travel in straight lines.
+Hamiltonian ray tracing of radio waves through a rotating pulsar
+magnetosphere: cold, strongly-magnetized dispersion relation in a dipolar
+field with a Goldreich-Julian-like density profile. O-modes refract
+self-consistently in the plasma density gradient; X-modes travel in
+straight lines (in the inertial frame).
+
+Rotation: rays are traced in the frame co-rotating with the star, where the
+dipole is static (rigidly rotating dipole, valid for r << R_LC). Rotation
+enters only through the ray kinematics (see rhs) and the aberration of the
+launch direction (see launch_field_aligned). Outputs x, k, Bfrz are in the
+co-rotating frame.
 
 O<->X mode conversion is a single, path-dependent stochastic process: at
 every integration step a local conversion probability is drawn from the
 non-adiabatic Landau-Zener formula
 
-    eta_{O/A->X} = sqrt(2) * p * (1-p)^alpha,   alpha = 0.6
+    eta_{O->X} = sqrt(2) * p * (1-p)^alpha,   alpha = 0.6
     p = exp(-Delta)
     Delta = 2 * ktilde_x^3 * rhotilde * sin^3(phi) / (3 |eps^2 - 1|)
 
-evaluated from the LOCAL field-line curvature frame at the ray's current
-position (no persistent per-ray frame, no discrete "crossing" event to
-detect -- eta is a smooth function of position). The coherence length for
-one passage is tilde_k_x * rho (not rho alone -- rho is just the field-line
-curvature scale from theta=xi/rho; the coupling is significant over
-xi ~ tilde_k_x * rho, confirmed numerically against a traced near-peak
-window), so the local rate is eta/(tilde_k_x*rho) and the per-step
+evaluated in the frame of the coupling expansion at the ray's current
+position: z0 || B, x0 || k_perp (so k = (k_x, 0, k_z)), and phi is the
+azimuth of the field-line bending direction in the x0-y0 plane (see
+conversion_frame). Conversion is only allowed where eps = omega/omega_res > 1
+(O-mode regime). In a static dipole, rays stay in their meridional plane,
+so phi = 0 and there is no conversion; rotation of the k-B plane comes from
+stellar rotation.
+
+The local conversion rate is eta/(tilde_k_x*rho), and the per-step
 probability is the Poisson form 1-exp(-rate*ds), which converges to
-integral(rate ds) along the ray as the step size shrinks.
+integral(rate ds) along the ray as the step size shrinks. The length scale
+tilde_k_x*rho is an estimate that still needs to be checked in the eps > 1
+region.
 
 Units: lengths in stellar radii R_star, time in R_star/c, wavevectors k in
 units of omega/c (so |k| equals the local refractive index n). The wave
@@ -128,11 +139,16 @@ class Model:
     beta0: float       = None
     freeze_on: bool = True
     r_freeze: float = 150.0
+    Omega: float    = 0.0              # stellar angular velocity in units of c/R_star
+                                        # (= R_star/R_LC). Rotation axis is z. 0 means
+                                        # no rotation. Rays are traced in the frame
+                                        # co-rotating with the star (see rhs).
 
     def __post_init__(self):
         if self.beta0 is None:
             self.beta0 = np.sqrt(1.0 - 1.0 / self.gamma0**2)
         assert self.r_freeze < self.r_out, "r_freeze must lie inside r_out"
+        assert self.Omega * self.r_out < 1.0, "r_out must lie inside the light cylinder"
 
     @property
     def mhat(self):
@@ -140,7 +156,8 @@ class Model:
 
 
 def model_from_physical(nu_GHz=1.4, B12=1.0, P=1.0, kappa_3=1.0, gamma0=20.0,
-                         chi_deg=30.0, R_km=10.0, coeff_wp2=5598.5, **kwargs):
+                         chi_deg=30.0, R_km=10.0, coeff_wp2=5598.5, rotate=True,
+                         **kwargs):
     """Build a Model from physical neutron-star/pulsar parameters at a
     single FIXED observing frequency, so wp2_surf, wB_surf, and omega_Rc
     stay mutually consistent (change nu_GHz/B12/P/kappa_3/gamma0 here --
@@ -151,6 +168,7 @@ def model_from_physical(nu_GHz=1.4, B12=1.0, P=1.0, kappa_3=1.0, gamma0=20.0,
         omega_B/omega   = nu_B(B12)/nu_GHz,  nu_B[GHz] = 2.8e9*B12
         omega*R_star/c  = 2*pi*nu_GHz[Hz]*R_star[cm]/c
         (omega_p/omega)^2_eff = coeff_wp2*kappa_3*B12/(P*nu_GHz^2*gamma0^3)
+        Omega           = 2*pi*R_star/(c*P) = R_star/R_LC   (if rotate)
 
     coeff_wp2 default (5598.5) is the first-principles Goldreich-Julian
     value: n_GJ=B/(P*c*e), omega_p^2=4*pi*(kappa*n_GJ)*e^2/m_e,
@@ -167,18 +185,23 @@ def model_from_physical(nu_GHz=1.4, B12=1.0, P=1.0, kappa_3=1.0, gamma0=20.0,
         R_km      : stellar radius in km.
         coeff_wp2 : coefficient in the wp2_eff scaling relation; override
                     only if your own derivation uses a different convention.
+        rotate    : if True, set Omega from P (co-rotating-frame ray tracing);
+                    if False, Omega = 0 (static dipole).
         **kwargs  : forwarded to Model (e.g. r_out, alpha_conv, freeze_on,
                     r_freeze, H_O).
     Returns:
-        Model instance with wp2_surf, wB_surf, omega_Rc, gamma0, nu_GHz, chi set.
+        Model instance with wp2_surf, wB_surf, omega_Rc, gamma0, nu_GHz, chi,
+        Omega set.
     """
     nu_B_GHz = 2.8e9 * B12
     wB_surf  = nu_B_GHz / nu_GHz
     R_cm, c_cm = R_km * 1e5, 3.0e10
     omega_Rc = 2 * np.pi * (nu_GHz * 1e9) * R_cm / c_cm
     wp2_surf = coeff_wp2 * kappa_3 * B12 / (P * nu_GHz**2 * gamma0**3)
+    Omega    = 2 * np.pi * R_cm / (c_cm * P) if rotate else 0.0
     return Model(chi=np.deg2rad(chi_deg), nu_GHz=nu_GHz, wp2_surf=wp2_surf,
-                 wB_surf=wB_surf, omega_Rc=omega_Rc, gamma0=gamma0, **kwargs)
+                 wB_surf=wB_surf, omega_Rc=omega_Rc, gamma0=gamma0,
+                 Omega=Omega, **kwargs)
 
 
 # =====================================================================
@@ -206,15 +229,25 @@ def curvature_radius(x, m, rel_eps=1e-4):
     return 1.0 / np.maximum(kap, 1e-30)
 
 
-def conversion_frame(x_ref, m, rel_eps=1e-4):
-    """Local field-line curvature frame at x_ref: z0 || B, x0 along
-    dBhat/ds (osculating plane, perp to z0), y0 = z0 x x0. Recomputed fresh
-    at whatever position it's called with -- no persistent per-ray frame.
+def conversion_frame(x_ref, k, m, rel_eps=1e-4):
+    """Local frame of the coupling expansion at x_ref, following the paper:
+    z0 || B, x0 || k_perp (the part of k perpendicular to B, so that
+    k = (k_x, 0, k_z) in this frame), y0 = z0 x x0. Also returns nhat, the
+    unit direction in which the field line bends (dBhat/ds). nhat lies in
+    the x0-y0 plane at azimuth phi: cos(phi) = nhat.x0, sin(phi) = nhat.y0.
+    Where k_perp ~ 0 (k exactly along B), x0 is undefined; it is then set to
+    nhat, and tilde_k_x = 0 there, so Delta = 0 regardless.
+    Args:
+        x_ref   : (N,3) float array -- positions [R*].
+        k       : (N,3) float array -- wavevectors [omega/c].
+        m       : Model.
+        rel_eps : float -- finite-difference step as fraction of |x_ref|.
     Returns:
-        (x0hat, y0hat, z0hat) : three (N,3) float arrays.
+        (x0hat, y0hat, z0hat, nhat) : four (N,3) float arrays.
     """
     B   = Bfield(x_ref, m)
     z0  = B / np.linalg.norm(B, axis=1, keepdims=True)
+    # bending direction of the field line, nhat = (dBhat/ds)/|dBhat/ds|
     eps = rel_eps * np.linalg.norm(x_ref, axis=1, keepdims=True)
     Bp  = Bfield(x_ref + eps * z0, m); Bp /= np.linalg.norm(Bp, axis=1, keepdims=True)
     Bm  = Bfield(x_ref - eps * z0, m); Bm /= np.linalg.norm(Bm, axis=1, keepdims=True)
@@ -228,20 +261,24 @@ def conversion_frame(x_ref, m, rel_eps=1e-4):
         alt[degen] = [1.0, 0.0, 0.0]
         c[bad]  = alt
         cn[bad] = np.linalg.norm(alt, axis=1, keepdims=True)
-    x0 = c / cn
+    nhat = c / cn
+    # x0 along k_perp
+    kperp = k - np.sum(k * z0, axis=1, keepdims=True) * z0
+    kpn   = np.linalg.norm(kperp, axis=1, keepdims=True)
+    small = kpn[:, 0] < 1e-14
+    x0 = np.where(small[:, None], nhat, kperp / np.maximum(kpn, 1e-300))
     y0 = np.cross(z0, x0)
-    return x0, y0, z0
+    return x0, y0, z0, nhat
 
 
-def delta_LZ(x, k, x0hat, y0hat, m):
-    """Delta = 2*ktx^3*rho_t*sin^3(phi) / (3*|eps^2-1|), evaluated locally
-    at (x,k) using the frame (x0hat,y0hat) established at x itself."""
+def delta_LZ(x, k, x0hat, y0hat, nhat, m):
+    """Delta = 2*ktx^3*rho_t*sin^3(phi) / (3*|eps^2-1|), evaluated locally at
+    (x,k) in the frame of conversion_frame(): ktx = |k.x0| = |k_perp|
+    (x0 || k_perp), and phi is the azimuth of the field-line bending
+    direction nhat in the x0-y0 plane, sin(phi) = nhat.y0."""
     ktx   = np.abs(np.sum(k * x0hat, axis=1))
     rho_t = m.omega_Rc * curvature_radius(x, m)
-    B     = Bfield(x, m)
-    Bx    = np.sum(B * x0hat, axis=1)
-    By    = np.sum(B * y0hat, axis=1)
-    sinph = np.abs(By) / np.maximum(np.sqrt(Bx**2 + By**2), 1e-30)
+    sinph = np.abs(np.sum(nhat * y0hat, axis=1))
     eps   = eps_param(x, m)
     denom = 3.0 * np.maximum(np.abs(eps**2 - 1.0), 1e-12)
     return 2.0 * ktx**3 * rho_t * sinph**3 / denom
@@ -278,7 +315,14 @@ def gradH_k(x, k, m, eps=1e-6):
 
 
 def rhs(x, k, isO, m):
-    """dx/ds = (dH/dk)/|dH/dk|, dk/ds = -(dH/dx)/|dH/dk|; X-modes go straight."""
+    """Ray equations in the frame co-rotating with the star, parametrized by
+    path length (s ~ c t):
+       dx/ds = (dH/dk)/|dH/dk| - Omega x x,
+       dk/ds = -(dH/dx)/|dH/dk| - Omega x k,
+    with Omega = m.Omega * z_hat. X-modes have dx/ds = k (|k|=1) plus the same
+    rotation terms, which is exact: a straight line in the inertial frame.
+    In this frame the dipole is static, so Bfield() is used unchanged.
+    For m.Omega = 0 this reduces to the static (non-rotating) equations."""
     dx = np.zeros_like(k)
     dk = np.zeros_like(k)
     dx[~isO] = k[~isO]
@@ -288,6 +332,10 @@ def rhs(x, k, isO, m):
         vn = np.linalg.norm(vg, axis=1, keepdims=True)
         dx[isO] =  vg / vn
         dk[isO] = -gradH_x(xo, ko, m) / vn
+    if m.Omega != 0.0:
+        Ov = np.array([0.0, 0.0, m.Omega])
+        dx -= np.cross(Ov[None, :], x)
+        dk -= np.cross(Ov[None, :], k)
     return dx, dk
 
 
@@ -326,31 +374,41 @@ def solve_n(x, khat, m, n_lo=1e-6, n_hi=1.0 + 1e-6, iters=48):
 # =====================================================================
 
 def propagate(x, k, isO, m, t_emit=None, h_frac=0.02, max_steps=50000,
-              apply_conversion=True, progress=True):
+              apply_conversion=True, progress=True, conv_log_path=None):
     """Integrate rays to escape (r>r_out) or absorption (r<1).
+    O<->X conversion is only allowed where eps = omega/omega_res > 1
+    (O-mode regime); for eps <= 1 the conversion probability is zero.
     Args:
         x, k     : (N,3) initial positions [R*] and wavevectors [omega/c].
         isO      : (N,) bool, True = O mode.
         m        : Model.
-        t_emit   : (N,) initial path length/time offset (default zeros).
-        h_frac   : step size as fraction of local radius. Check
-                   `convergence_test` before trusting results at a given
-                   h_frac -- this coherence-length rate is stiff and needs
-                   smaller steps than a naive rho-based rate would.
-        max_steps: safety cap; increase for smaller h_frac (steps needed
-                   scale roughly as ln(r_out/r_em)/h_frac).
-        apply_conversion : if True (default), mode flips are drawn and
-                   applied each step, feeding back into subsequent
-                   refraction (the physical run). If False, mode is held
-                   fixed for the whole flight -- `nconv_exp` is still
-                   accumulated, giving a DETERMINISTIC diagnostic (no RNG)
-                   for convergence checks.
-        progress : print a lightweight throttled status line (no external
-                   dependency).
+        t_emit   : (N,) initial path length / time offset (default zeros).
+        h_frac   : step size as fraction of local radius. Reduce this (and
+                   check `convergence_test`) if nconv / final O-fraction
+                   still drift when you halve it.
+        max_steps: safety cap.
+        apply_conversion : if True (default), a mode flip is drawn and
+                   applied each step, feeding back into subsequent refraction
+                   (the physical run). If False, mode is held fixed for the
+                   whole flight and no flips happen -- `nconv_exp` (see below)
+                   is still accumulated, giving a DETERMINISTIC diagnostic
+                   (no RNG draws at all) of whether the rate integral itself
+                   is converging, decoupled from realized-count shot noise
+                   and from conversion feeding back into the trajectory. Use
+                   this for convergence checks; use the default for physics.
+        progress : print a lightweight one-line status update (throttled to ~2/sec), no external dependency.
+        conv_log_path : if given, the (x,y,z) position of every executed mode
+                   flip (apply_conversion=True only) is collected in memory
+                   during the run and written ONCE, after the run completes,
+                   to an HDF5 file at this path as a dataset "conv_x" of
+                   shape (n_conversions, 3). Default None disables this
+                   entirely (no file is created, no behavior change, no
+                   memory overhead). Requires `import h5py`.
     Returns:
         dict: x, k, isO, Bfrz, t, escaped, hit, lost, nconv, nconv_exp, frozen.
-        nconv_exp is the running sum of per-step probabilities (the expected
-        conversion count along the as-launched trajectory), accumulated
+        All vectors are in the co-rotating frame. nconv_exp is the running
+        sum of per-step conversion probabilities (the expected conversion
+        count along the ORIGINAL, as-launched mode trajectory) -- computed
         every run regardless of apply_conversion.
     """
     N      = len(x)
@@ -364,6 +422,8 @@ def propagate(x, k, isO, m, t_emit=None, h_frac=0.02, max_steps=50000,
     nconv_exp = np.zeros(N, float)
     s      = np.zeros(N) if t_emit is None else np.asarray(t_emit, float).copy()
     Bfrz   = Bfield(x, m)
+
+    conv_x_chunks = [] if conv_log_path is not None else None
 
     def _norm(v):
         return np.linalg.norm(v, axis=1)
@@ -391,18 +451,17 @@ def propagate(x, k, isO, m, t_emit=None, h_frac=0.02, max_steps=50000,
 
     t_start = time.time()
     t_last  = t_start
-    step = 0
     for step in range(max_steps):
         idx = np.where(active)[0]
         if idx.size == 0:
             break
-        # ---------------- one RK4 step ------------------------------------
+        # ---------------- one RK4 step -----------------------------------------
         x_old, k_old = x[idx].copy(), k[idx].copy()
         h = h_frac * _norm(x_old)
         x_new, k_new = rk4_step(x_old, k_old, isO[idx], h, m)
         x[idx], k[idx] = x_new, k_new
         s[idx] += h
-        # ---------------- termination bookkeeping -------------------------
+        # ---------------- termination bookkeeping -----------------------------
         finite = np.isfinite(x_new).all(1) & np.isfinite(k_new).all(1)
         r_new  = np.where(finite, _norm(np.nan_to_num(x_new)), np.nan)
         esc    = finite & (r_new > m.r_out)
@@ -425,7 +484,7 @@ def propagate(x, k, isO, m, t_emit=None, h_frac=0.02, max_steps=50000,
             continue
         r_al = r_new[keep]
         h_al = h[keep]
-        # ---------------- polarization freezing ----------------------------
+        # ---------------- polarization freezing -------------------------------
         if m.freeze_on:
             frozen[al[r_al > m.r_freeze]] = True
         cm  = ~frozen[al]
@@ -433,14 +492,16 @@ def propagate(x, k, isO, m, t_emit=None, h_frac=0.02, max_steps=50000,
         if upd.size == 0:
             continue
         Bfrz[upd] = Bfield(x[upd], m)            # PA reference tracks B while coupled
-        # ---------------- mode conversion (Landau-Zener, local rate) -------
-        # Delta/eta are smooth local quantities (no crossing/event to
-        # detect). The coherence length for one passage is tilde_k_x*rho
-        # (NOT rho alone -- see module docstring); eta/(tilde_k_x*rho) is
-        # the local conversion rate.
-        x0u, y0u, _ = conversion_frame(x[upd], m)      # frame local to THIS point
-        delta = delta_LZ(x[upd], k[upd], x0u, y0u, m)
+        # ---------------- mode conversion (Landau-Zener, local rate) ----------
+        # Frame of the coupling expansion at the current point: z0 || B,
+        # x0 || k_perp, phi = azimuth of the field-line bending direction
+        # in the x0-y0 plane (see conversion_frame). The local rate uses the
+        # length scale tilde_k_x*rho (estimate, to be checked for eps > 1).
+        x0u, y0u, _, nh = conversion_frame(x[upd], k[upd], m)
+        delta = delta_LZ(x[upd], k[upd], x0u, y0u, nh, m)
         eta   = eta_LZ(delta, m)
+        eps   = eps_param(x[upd], m)
+        eta   = np.where(eps > 1.0, eta, 0.0)        # O-X conversion only for eps > 1
         rho   = curvature_radius(x[upd], m)
         ktx   = np.abs(np.sum(k[upd] * x0u, axis=1))
         l_coh = np.maximum(ktx, 1e-6) * rho
@@ -449,6 +510,8 @@ def propagate(x, k, isO, m, t_emit=None, h_frac=0.02, max_steps=50000,
         nconv_exp[upd] += P                     # deterministic, no RNG
         if apply_conversion:
             flip = upd[rng.random(upd.size) < P]
+            if conv_x_chunks is not None and flip.size:
+                conv_x_chunks.append(x[flip].copy())
             _apply_flips(flip)
     if progress:
         print(f"\rstep {step+1}/{max_steps}  active={int(active.sum())}/{N}  "
@@ -460,6 +523,13 @@ def propagate(x, k, isO, m, t_emit=None, h_frac=0.02, max_steps=50000,
     if lost.any():
         print(f"WARNING: {int(lost.sum())} rays produced non-finite state "
               f"and were dropped.")
+
+    if conv_log_path is not None:
+        conv_x_all = (np.concatenate(conv_x_chunks, axis=0) if conv_x_chunks
+                      else np.zeros((0, 3)))
+        with h5py.File(conv_log_path, "w") as f:
+            f.create_dataset("conv_x", data=conv_x_all, compression="gzip",
+                              compression_opts=4, shuffle=True)
 
     escaped = ~active & ~hit & ~lost
     return dict(x=x, k=k, isO=isO, Bfrz=Bfrz, t=s, escaped=escaped, hit=hit,
@@ -571,13 +641,14 @@ def launch_radial(N, m, r_em=1.05, f_O=1.0, t_emit=None):
 
 
 def launch_field_aligned(N, m, r_em=1.05, f_O=0.5, cap_deg=10.0, t_emit=None):
-    """Rays launched exactly TANGENT to the local dipole field line at each
-    emission point (a discharge streaming along B) -- NOT radially
-    outward, and with no additional angular spread: k_hat = Bhat(x_em)
-    exactly.
+    """Rays launched along the local dipole field line at each emission point
+    (a discharge streaming along B), with no additional angular spread.
 
-    tilde_k_x is therefore exactly 0 at emission for every ray; it becomes
-    nonzero purely through subsequent O-mode refraction along the ray.
+    With rotation (m.Omega != 0), emission along B happens in the frame of the
+    co-rotating plasma. In the co-rotating-frame variables used by rhs, this
+    means k_hat is proportional to Bhat + Omega x x (aberration), so that the
+    ray's coordinate velocity starts exactly along B. Without rotation,
+    k_hat = Bhat exactly, and tilde_k_x = 0 at emission.
 
     cap_deg is just where on the star the discharge footpoints are drawn
     from (colatitude spread around the magnetic axis) -- it can be any
@@ -586,7 +657,7 @@ def launch_field_aligned(N, m, r_em=1.05, f_O=0.5, cap_deg=10.0, t_emit=None):
 
     Args:
         N       : int -- rays to draw (returned M<=N after evanescence cut).
-        m       : Model -- uses m.mhat, m.H_O.
+        m       : Model -- uses m.mhat, m.H_O, m.Omega.
         r_em    : float -- emission radius in R_star.
         f_O     : float -- fraction launched as O-mode (rest X).
         cap_deg : float -- footpoint half-angle (deg) around the magnetic axis.
@@ -596,16 +667,22 @@ def launch_field_aligned(N, m, r_em=1.05, f_O=0.5, cap_deg=10.0, t_emit=None):
     """
     rhat_foot = polar_cap_dirs(N, m, deg=cap_deg)
     x = r_em * rhat_foot
+    wp2_em = wp2_w2(x, m)
+    print(f"launch_field_aligned: (omega_p/omega)^2 at r_em = "
+          f"{wp2_em.min():.3f} - {wp2_em.max():.3f}  (must be < 1 for O-modes)")
 
-    # Local field direction at each footpoint is the launch direction
-    # exactly. Bfield() alternates sign by hemisphere (dipole lines enter
-    # at one pole, leave at the other) -- flip it to always point outward
-    # (away from the star), the physical streaming direction, regardless
-    # of which magnetic pole the footpoint is near.
+    # Local field direction at each footpoint is the launch direction.
+    # Bfield() alternates sign by hemisphere (dipole lines enter at one
+    # pole, leave at the other) -- flip it to always point outward (away
+    # from the star), the physical streaming direction.
     khat = Bfield(x, m)
     khat = khat / np.linalg.norm(khat, axis=1, keepdims=True)
     inward = np.sum(khat * rhat_foot, axis=1) < 0.0
     khat[inward] *= -1.0
+    if m.Omega != 0.0:                                 # aberration by corotation
+        Ov = np.array([0.0, 0.0, m.Omega])
+        khat = khat + np.cross(Ov[None, :], x)
+        khat = khat / np.linalg.norm(khat, axis=1, keepdims=True)
 
     isO  = rng.random(N) < f_O
     n    = np.ones(N)
@@ -740,6 +817,8 @@ def build_argparser():
     # Misc
     p.add_argument("--seed", type=int, default=42, help="RNG seed (vary per cluster job)")
     p.add_argument("--out", type=str, default="res_out.h5", help="output HDF5 path")
+    p.add_argument("--conv-log", type=str, default="conv_locations.h5",
+                   help="output HDF5 path for mode-conversion locations")
     p.add_argument("--no-progress", action="store_true", help="disable status printing")
     return p
 
@@ -758,7 +837,7 @@ def main():
         args.N, m, r_em=args.r_em, f_O=args.f_O, cap_deg=args.cap_deg)
 
     res = propagate(x0, k0, isO0, m, t_emit=te, h_frac=args.h_frac,
-                     max_steps=args.max_steps, progress=not args.no_progress)
+                     max_steps=args.max_steps, progress=not args.no_progress, conv_log_path=args.conv_log)
 
     print(f"escaped: {res['escaped'].sum()}, hit star: {res['hit'].sum()}, "
           f"mean conversions/ray: {res['nconv'].mean():.3f}, "

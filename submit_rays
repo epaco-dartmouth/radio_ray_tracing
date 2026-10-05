@@ -1,17 +1,40 @@
 #!/bin/bash
-  
-#SBATCH -J postprocess
+
+#SBATCH -J raytrace
 #SBATCH --partition standard
 ##SBATCH --account=physics
-#SBATCH -o ./post_6.out
-#SBATCH -e ./post_6.err
+#SBATCH -o ./raytrace_%j.out
+#SBATCH -e ./raytrace_%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=1
 #SBATCH --time=24:00:00
 
+FO=0.5                  # launched O-mode fraction
+TAG="P05"           # prefix for output file names
+
+NU=1.4
+B12=1.0
+P=0.1
+KAPPA3=0.1
+GAMMA0=20
+CHI=30
+R_EM=1.5
+CAP=10
+N=1000000
+H_FRAC=0.002
+SEED=42
+
+OUT="res_${TAG}_fO${FO}.h5"
+CONV="conv_${TAG}_fO${FO}.h5"
+
+source /optnfs/common/miniconda3/etc/profile.d/conda.sh
 conda activate /dartfs/rc/lab/E/EPaCO/envs/entity
+echo "Conda environment activated successfully"
+echo "f_O=${FO} -> ${OUT}, ${CONV}"
 
-python -u radio_ray_tracing_standalone.py --f-O=0.6 --out="res_out_06.h5"
-
-
+python -u radio_ray_tracing_standalone.py \
+    --nu-GHz=${NU} --B12=${B12} --P=${P} --kappa3=${KAPPA3} --gamma0=${GAMMA0} \
+    --chi-deg=${CHI} --r-em=${R_EM} --cap-deg=${CAP} \
+    --N=${N} --h-frac=${H_FRAC} --seed=${SEED} \
+    --f-O=${FO} --out="${OUT}" --conv-log="${CONV}"
